@@ -1,0 +1,27 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# node
+node_modules/
+.next/
+out/
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/
+
+# local data
+pgdata/
+media/
+fixtures/playground/

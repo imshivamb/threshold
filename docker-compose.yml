@@ -1,0 +1,55 @@
+# docker compose up  ->  db :5432, api :8000, web :3000, ring-sandbox emulator :8787
+name: threshold
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: threshold
+      POSTGRES_PASSWORD: threshold
+      POSTGRES_DB: threshold
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threshold"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  ring-sandbox:
+    build:
+      context: infra
+      dockerfile: ring-sandbox.Dockerfile
+    ports: ["8787:8787"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8787/_sandbox/state')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://threshold:threshold@db:5432/threshold
+      RING_MODE: ${RING_MODE:-emulator}
+      RING_EMULATOR_URL: http://ring-sandbox:8787
+      RING_WEBHOOK_SIGNING_KEY: ${RING_WEBHOOK_SIGNING_KEY:-dev-signing-key-change-me}
+      # The emulator delivers webhooks to the api over the compose network.
+      PUBLIC_WEBHOOK_URL: http://api:8000/webhooks/ring
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      ring-sandbox: {condition: service_healthy}
+
+  web:
+    build: web
+    environment:
+      API_URL: http://api:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
