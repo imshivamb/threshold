@@ -15,7 +15,7 @@ from datetime import date, datetime, time, timedelta
 from statistics import median
 from zoneinfo import ZoneInfo
 
-from visits import Burst, DoorEvent, VisitGroup
+from visits import AIDE_ROLES, Burst, DoorEvent, VisitGroup
 
 ANCHORS = ("first_activity", "aide_visit", "delivery", "out_and_back", "last_activity")
 DAY_GROUPS = ("weekday", "weekend")
@@ -24,6 +24,7 @@ MIN_CONFIDENCE = 0.6
 MIN_DAYS_OBSERVED = 7
 DAY_START = time(4, 0)  # first activity counts from 04:00
 OUT_AND_BACK = (timedelta(minutes=20), timedelta(minutes=180))
+NIGHT = (time(1, 0), time(4, 0))
 
 
 @dataclass(frozen=True)
@@ -84,9 +85,9 @@ def daily_observations(
         day["last_activity"] = {"minute": _minutes(local)}
 
     for v in sorted(visits, key=lambda v: v.started_at):
-        if v.role_guess not in ("aide", "delivery"):
+        if v.role_guess not in (*AIDE_ROLES, "delivery"):
             continue
-        name = "aide_visit" if v.role_guess == "aide" else "delivery"
+        name = "delivery" if v.role_guess == "delivery" else "aide_visit"
         local = v.started_at.astimezone(tz)
         out[local.date()].setdefault(
             name, {"minute": _minutes(local), "duration_min": (v.ended_at - v.started_at).total_seconds() / 60}
@@ -134,3 +135,17 @@ def learn_anchors(observations: dict[date, dict[str, dict]], observed_days: list
                 )
             )
     return results
+
+
+def activity_stats(events: list[DoorEvent], tz: ZoneInfo) -> dict:
+    """Household-wide facts the concern score needs: the P95 gap between human activity,
+    and how many past days had human activity at night (01:00-04:00)."""
+    human = sorted(e.at for e in events if e.is_human)
+    gaps = [(b - a).total_seconds() / 60 for a, b in zip(human, human[1:])]
+    night_days = {
+        t.astimezone(tz).date() for t in human if NIGHT[0] <= t.astimezone(tz).time() < NIGHT[1]
+    }
+    return {
+        "p95_gap_min": round(percentile(gaps, 0.95)) if gaps else None,
+        "night_activity_days": len(night_days),
+    }

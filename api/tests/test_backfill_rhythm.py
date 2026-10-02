@@ -70,7 +70,7 @@ async def test_three_weeks_of_history_teach_the_routine(emulator, ring, sessions
     assert time(17, 0) <= walk.window_start and walk.window_end <= time(18, 30)
     assert time(21, 0) <= anchors[("last_activity", "weekday")].window_start
 
-    assert dict(roles)["aide"] >= 14 and dict(roles)["delivery"] >= 5
+    assert dict(roles)["likely_aide"] >= 14 and dict(roles)["delivery"] >= 5
 
 
 async def test_backfill_twice_and_webhook_then_history_never_double_count(emulator, ring, sessions, household):

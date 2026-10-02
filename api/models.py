@@ -1,4 +1,4 @@
-"""Tables so far. cases arrive with the Silence Watch."""
+"""Database tables."""
 
 from datetime import UTC, datetime, time
 from typing import Any
@@ -41,6 +41,8 @@ class Household(Base):
     ring_mode: Mapped[str] = mapped_column(String(16))  # playground / emulator
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_days: Mapped[int] = mapped_column(Integer, default=7)
+    # Learned with the anchors: {"p95_gap_min": ..., "night_activity_days": ...}
+    rhythm_stats: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -136,3 +138,25 @@ class Anchor(Base):
     stats: Mapped[dict[str, Any]] = mapped_column(JSONType)  # p10 / median / p90 minutes, durations
     overrides: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)  # feedback learning (F12)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Case(Base):
+    """Something worth a person's attention: a concern about the household, or a device issue."""
+
+    __tablename__ = "cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # concern / device_issue
+    state: Mapped[str] = mapped_column(String(16), index=True)  # open / acked / resolved
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    level: Mapped[int] = mapped_column(Integer, default=0)  # 0 watch, 1 gentle check, 2 primary, 3 circle
+    local_date: Mapped[str] = mapped_column(String(10))  # household-local day the case belongs to
+    signals: Mapped[list[dict[str, Any]]] = mapped_column(JSONType)
+    score_history: Mapped[list[dict[str, Any]]] = mapped_column(JSONType)
+    acks: Mapped[list[dict[str, Any]]] = mapped_column(JSONType)
+    agent_decision: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    level_since: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # starts the ack timeout
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution: Mapped[str | None] = mapped_column(String(32))  # activity / device_back / confirmed_fine

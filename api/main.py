@@ -21,6 +21,7 @@ from models import Device, Household
 from poller import HistoryPoller
 from ring import RingClient, RingError, TokenStore
 from routine import LOOKBACK_DAYS, rebuild
+from watch import tick
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("threshold")
@@ -141,6 +142,21 @@ async def lifespan(app: FastAPI):
             await ctx.relearn()
         except Exception:
             log.exception("nightly relearn failed")
+
+    async def watch_job() -> None:
+        try:
+            async with sessionmaker()() as session:
+                household = await session.get(Household, ctx.household_id)
+                await tick(
+                    session, household, ring=ring, stale_after=timedelta(hours=settings.device_stale_hours)
+                )
+                await session.commit()
+        except Exception:
+            log.exception("silence watch failed")
+
+    scheduler.add_job(
+        watch_job, "interval", seconds=settings.watch_interval_seconds, max_instances=1, coalesce=True
+    )
 
     # Relearn the rhythm every night once the day is complete.
     scheduler.add_job(relearn_job, "cron", hour=3, minute=0, timezone=household.timezone)

@@ -42,3 +42,25 @@ Format: task · steps · expected vs actual · severity · workaround · suggest
 - **Severity:** Low — fine for an access log, but history polling can't show "someone is looking right now".
 - **Workaround:** Present live views in the "who looked" log as recent, not live; the stored `start` is still exact.
 - **Suggestion:** List the entry (without `end`) when the session opens, or send a live-view-started event the Playground can deliver.
+
+## 4. ring-sandbox: device status `reported_at` is the last event's time, not a heartbeat
+
+- **Date:** 2026-10-02
+- **Task:** Tell "camera offline" apart from "nobody moved" using the device status heartbeat.
+- **Steps:** Write a quiet night into the emulator, then call `GET /v1/devices/{id}/status` the next morning.
+- **Expected:** As on the real Playground, `reported_at` is recent while the device is online (Playground: `reported_at` 07:42:22 UTC when its last event was 06:24:46).
+- **Actual:** The emulator sets `reported_at` to the timestamp of the device's most recent event, so after any quiet stretch an online camera looks hours stale.
+- **Severity:** Medium — a heartbeat check built against the emulator flags every silent morning as a device problem.
+- **Workaround:** Treat a successful status call with `online: true` as a heartbeat at call time; judge staleness only when Ring can't be reached.
+- **Suggestion:** Advance `reported_at` on each status read (or on a timer) while the device is online. Candidate for our ring-sandbox PR.
+
+## 5. ring-sandbox: history keeps only motion and dings; device ids change on restart
+
+- **Date:** 2026-10-02
+- **Task:** Backfill past days from the emulator's event history, including a past camera outage.
+- **Steps:** Inject `device_offline` / `device_online` and contact-sensor events with past timestamps, then read `GET /v1/history/devices/{id}/events`; restart the emulator container.
+- **Expected:** Some record of past outages; stable device ids across restarts.
+- **Actual:** Only `motion` and `ding` reach history (device state and sensor events change state but leave no trace), and every restart creates new random device ids, so the old ids return 404.
+- **Severity:** Low — outages are only knowable live (via webhooks), and stale ids look like dead cameras unless 404 is handled.
+- **Workaround:** Treat a 404 from the status call as "no longer on the account" and stop watching that device.
+- **Suggestion:** Allow fixed device ids (e.g. `--seed`) and document which event types land in history.

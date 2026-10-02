@@ -24,12 +24,12 @@ def test_delivery_is_one_visit():
     assert resident == []
 
 
-def test_ring_then_leave_is_one_visit_and_long_ones_are_guessed_aide():
+def test_ring_then_leave_is_one_visit_and_long_ones_are_likely_the_aide():
     events = [ev(0), ev(0.1, "button_press", None), ev(90)]  # aide stays 90 min
     events += [ev(300), ev(300.1, "button_press", None), ev(320)]  # neighbour, 20 min
     visits, resident = group_visits(events, IST)
     assert [(v.role_guess, round((v.ended_at - v.started_at).total_seconds() / 60)) for v in visits] == [
-        ("aide", 90),
+        ("likely_aide", 90),
         ("unknown", 20),
     ]
     assert resident == []

@@ -1,6 +1,9 @@
-"""Settings, devices, events and live-view endpoints."""
+"""Settings, Ring, rhythm, today and case endpoints."""
 
 from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -8,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session
-from models import Anchor, Device, Event, Visit
+from models import Anchor, Case, Device, Event, Household, Visit
 from rhythm import can_alert
 from ring import RingError, RingTokenExpired
 from routine import LOOKBACK_DAYS
+from watch import acknowledge, anchor_statuses, load_anchors, load_today
 
 router = APIRouter()
 
@@ -195,3 +199,82 @@ async def recent_visits(
         }
         for v in rows
     ]
+
+
+def case_json(c: Case) -> dict:
+    return {
+        "id": c.id,
+        "kind": c.kind,
+        "state": c.state,
+        "score": c.score,
+        "level": c.level,
+        "local_date": c.local_date,
+        "signals": c.signals,
+        "score_history": c.score_history,
+        "acks": c.acks,
+        "agent_decision": c.agent_decision,
+        "opened_at": c.opened_at,
+        "level_since": c.level_since,
+        "resolved_at": c.resolved_at,
+        "resolution": c.resolution,
+    }
+
+
+@router.get("/households/{household_id}/today")
+async def today_card(household_id: int, session: AsyncSession = Depends(get_session), c=Depends(ctx)) -> dict:
+    """Today at a glance: each anchor met / pending / missed, open cases, camera health."""
+    _household(household_id, c)
+    household = await session.get(Household, household_id)
+    today = await load_today(session, household, datetime.now(tz=UTC))
+    anchors = await load_anchors(session, household_id, today.day)
+    open_cases = (
+        await session.execute(
+            select(Case)
+            .where(Case.household_id == household_id, Case.state.in_(("open", "acked")))
+            .order_by(Case.opened_at.desc())
+        )
+    ).scalars()
+    devices = (await session.execute(select(Device).where(Device.household_id == household_id))).scalars()
+    return {
+        "date": today.day.isoformat(),
+        "timezone": household.timezone,
+        "anchors": [vars(s) for s in anchor_statuses(anchors, today)],
+        "last_human_activity": today.last_human.at if today.last_human else None,
+        "open_cases": [case_json(x) for x in open_cases],
+        "devices": [
+            {"id": d.id, "name": d.name, "online": d.online, "last_heartbeat_at": d.last_heartbeat_at} for d in devices
+        ],
+    }
+
+
+@router.get("/cases/{case_id}")
+async def get_case(case_id: int, session: AsyncSession = Depends(get_session), c=Depends(ctx)) -> dict:
+    case = await session.get(Case, case_id)
+    if case is None or case.household_id != c.household_id:
+        raise HTTPException(404, "case not found")
+    return case_json(case)
+
+
+class AckIn(BaseModel):
+    response: Literal["fine", "calling", "escalate"]
+    reason: str | None = Field(default=None, max_length=500)
+    recurring: bool = False  # the reason holds every week on this weekday
+    member_id: int | None = None
+
+
+@router.post("/cases/{case_id}/ack")
+async def ack_case(
+    case_id: int, body: AckIn, session: AsyncSession = Depends(get_session), c=Depends(ctx)
+) -> dict:
+    """The web app's ack. Telegram buttons will call the same handler."""
+    case = await session.get(Case, case_id)
+    if case is None or case.household_id != c.household_id:
+        raise HTTPException(404, "case not found")
+    try:
+        await acknowledge(
+            session, case, body.response, reason=body.reason, recurring=body.recurring, member_id=body.member_id
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await session.commit()
+    return case_json(case)

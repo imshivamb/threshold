@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Anchor, Event, Household, Member, Visit
-from rhythm import AnchorResult, daily_observations, learn_anchors
+from rhythm import AnchorResult, activity_stats, daily_observations, learn_anchors
 from visits import AideSlot, DoorEvent, group_visits
 
 LOOKBACK_DAYS = 28
@@ -75,6 +75,7 @@ async def rebuild(session: AsyncSession, household: Household, *, now: datetime 
     observed = _observed_days(past, tz, today)
     anchors = learn_anchors(observations, observed)
     await _store_anchors(session, household.id, anchors, now)
+    household.rhythm_stats = activity_stats(past, tz)
     return {
         "events": len(events),
         "visits": len(groups),

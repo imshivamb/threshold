@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Run the history poller in emulator mode too (playground mode always polls).
     poll_in_emulator_mode: bool = False
 
+    # Silence Watch: how often it runs, and when a camera's heartbeat counts as stale.
+    watch_interval_seconds: int = 60
+    device_stale_hours: float = 2.0
+
     household_name: str = "Demo household"
     household_timezone: str = "Asia/Kolkata"
 

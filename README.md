@@ -42,7 +42,11 @@ and Threshold backfills it through the Ring history API, then learns the rhythm:
 docker compose exec ring-sandbox sh -c 'ringsynth --persona $PERSONAS/aging_in_place.yml --days 28'
 curl -X POST localhost:8000/ring/backfill
 curl localhost:8000/households/1/rhythm
+curl localhost:8000/households/1/today
 ```
+
+Use `--days 28`: anchors alert only after 7 observed days in their day group, and four
+weeks are needed for 7 weekend days.
 
 Add `--anomaly silent_morning@-1` (nothing before noon yesterday) or
 `--anomaly offline@-2:07:00-10:00` to test absence detection. Use `--dry-run` to print the
@@ -87,6 +91,29 @@ token expires, the api returns 401 with a prompt to paste a new one.
   confidence ≥ 0.6 and at least 7 observed days.
 - It relearns every night at 03:00 household time, and after every backfill.
 
+## How silence is noticed
+
+`api/watch.py` runs every minute (the Silence Watch):
+
+1. Each of today's anchors is **met**, **pending** (window still open) or **missed**.
+2. Signals: missed anchors (only those allowed to alert), a gap in human activity beyond
+   the household's P95 gap, the aide not arriving 30 min after their slot, and activity
+   between 01:00 and 04:00 that the history never shows.
+3. **Device health first.** Before scoring, each camera's status is refreshed. If one is
+   offline, or its heartbeat is older than `DEVICE_STALE_HOURS` (2), the signals open a
+   `device_issue` case, not a concern. Nothing that happened while a camera was down is
+   judged afterwards.
+4. Otherwise the **concern score** (0–100): missed first activity × confidence (up to 40),
+   silence beyond the P95 gap (10 a hour, up to 30), a late aide (20), unusual night
+   activity (15), and −40 when an ack reason on file explains it.
+5. Score sets the **level**: 20–39 → 0 watch, 40–59 → 1 gentle check, 60–79 → 2 primary
+   caregiver, 80+ → 3 whole circle. An unanswered level 1 climbs after 15 min, level 2
+   after 30 min. Any human activity at the door resolves the concern.
+
+`GET /households/{id}/today` shows today's anchors and open cases; `GET /cases/{id}` shows
+signals, score history and acks; `POST /cases/{id}/ack` takes `fine`, `calling` or
+`escalate`, with an optional reason (`recurring: true` applies it to that weekday).
+
 ## Tests
 
 ```bash
@@ -96,7 +123,10 @@ uv venv && uv pip install -e ".[dev]" -e ../tools/synth
 .venv/bin/pytest ../tools/synth  # synthesizer
 ```
 
-The Ring client and backfill tests run against an in-process ring-sandbox emulator.
+The Ring client, backfill and Silence Watch tests run against an in-process ring-sandbox
+emulator, on SQLite by default. To run them on Postgres instead, point `TEST_DATABASE_URL`
+at a throwaway database, e.g.
+`TEST_DATABASE_URL=postgresql+asyncpg://threshold:threshold@localhost:5432/threshold_test`.
 
 ## License
 

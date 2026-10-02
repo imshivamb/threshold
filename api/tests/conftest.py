@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -19,7 +20,8 @@ SIGNING_KEY = "test-signing-key"
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        database_url="sqlite+aiosqlite:///:memory:",
+        # SQLite by default; set TEST_DATABASE_URL to run the suite on a throwaway Postgres database.
+        database_url=os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:"),
         ring_mode="emulator",
         ring_webhook_signing_key=SIGNING_KEY,
         _env_file=None,
@@ -30,6 +32,7 @@ def settings() -> Settings:
 async def sessions(settings):
     maker = init_engine(settings.database_url)
     async with maker.kw["bind"].begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield maker
     await dispose_engine()

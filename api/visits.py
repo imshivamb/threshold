@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 BURST_GAP = timedelta(minutes=5)
 MAX_VISIT = timedelta(hours=4)
-# With no aide schedule on file, a rung-in visit at least this long is guessed to be the aide.
+# With no aide schedule on file, a rung-in visit at least this long is labelled "likely_aide".
 AIDE_MIN_DURATION = timedelta(minutes=45)
 AIDE_SLOT_SLACK = timedelta(minutes=30)
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -67,7 +67,10 @@ class VisitGroup:
     started_at: datetime
     ended_at: datetime
     event_ids: list[int]
-    role_guess: str  # aide / delivery / unknown
+    role_guess: str  # aide / likely_aide / delivery / unknown
+
+
+AIDE_ROLES = ("aide", "likely_aide")
 
 
 @dataclass(frozen=True)
@@ -146,4 +149,4 @@ def _guess_role(start: datetime, end: datetime, tz: ZoneInfo, aide_slots: list[A
     if aide_slots:
         local = start.astimezone(tz)
         return "aide" if any(slot.matches(local) for slot in aide_slots) else "unknown"
-    return "aide" if end - start >= AIDE_MIN_DURATION else "unknown"
+    return "likely_aide" if end - start >= AIDE_MIN_DURATION else "unknown"
