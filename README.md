@@ -28,10 +28,11 @@ The api registers its webhook with the emulator on startup, the same as
 Then play a scenario:
 
 ```bash
-pip install "ring-sandbox[server]"
-ring-sandbox play delivery --speed 5
-curl localhost:8000/events
+docker compose exec ring-sandbox ring-sandbox play delivery --speed 5
+curl localhost:8000/events      # or open http://localhost:3000
 ```
+
+(Or `pip install "ring-sandbox[server]"` and run `ring-sandbox play delivery --speed 5` from your machine.)
 
 ### Playground mode (real Ring API)
 
