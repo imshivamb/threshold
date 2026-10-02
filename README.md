@@ -5,7 +5,6 @@ Threshold learns a home's daily rhythm from Ring events and tells a faraway fami
 *nothing* happened, while telling "no activity" apart from "camera offline".
 
 > Work in progress for the Amazon Developer Hackathon (Ring track).
-> Build spec: [`docs/`](docs/).
 
 ## Run it
 
