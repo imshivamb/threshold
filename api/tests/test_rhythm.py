@@ -36,8 +36,14 @@ def test_window_is_p10_minus_15_to_p90_plus_15_and_confidence_counts_missing_day
     assert ("first_activity", "weekend") not in anchors  # weekends were silent: nothing to learn
 
 
-def test_first_activity_ignores_the_small_hours():
+def test_first_activity_ignores_the_small_hours_and_afternoon_outliers():
     d = date(2026, 9, 7)
     events = [human(at(d, 2, 30)), human(at(d, 7, 15))]
     obs = daily_observations(events, [], [], IST)
     assert obs[d]["first_activity"]["minute"] == 7 * 60 + 15
+
+    # Eight weekend days, one with a skipped morning: the 13:30 outlier must not stretch the window.
+    sats = [date(2026, 9, 5) + timedelta(weeks=i) for i in range(8)]
+    events = [human(at(s, 13, 30) if i == 3 else at(s, 8, 0) + timedelta(minutes=i)) for i, s in enumerate(sats)]
+    [first] = [a for a in learn_anchors(daily_observations(events, [], [], IST), sats) if a.name == "first_activity"]
+    assert first.window_end <= time(8, 30) and first.days_seen == 7 and first.confidence == 0.875

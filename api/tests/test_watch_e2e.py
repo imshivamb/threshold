@@ -32,10 +32,11 @@ async def household(settings, sessions):
         return h
 
 
-def last_day(weekday_only: bool = False):
-    """The scenario day: the latest past day (everything stays in the past for the emulator)."""
+def last_day(kind: str = "any"):
+    """The scenario day: the latest past day of ``kind`` (any / weekday / weekend), so
+    everything stays in the past for the emulator."""
     d = datetime.now(tz=UTC).astimezone(TZ).date() - timedelta(days=1)
-    while weekday_only and d.weekday() >= 5:
+    while (kind == "weekday" and d.weekday() >= 5) or (kind == "weekend" and d.weekday() < 5):
         d -= timedelta(days=1)
     return d
 
@@ -117,19 +118,17 @@ async def cases(sessions):
         return list((await session.execute(select(Case).order_by(Case.id))).scalars())
 
 
-async def test_silent_morning_opens_a_concern_that_climbs_from_l1_to_l2(emulator, ring, sessions, household):
-    # A weekday: with only ~8 weekend days in four weeks, one skipped weekend morning can
-    # stretch the weekend window so far that the score jumps straight to level 2.
-    d = last_day(weekday_only=True)
+@pytest.mark.parametrize("kind", ["weekday", "weekend"])
+async def test_silent_morning_opens_a_concern_that_climbs_from_l1_to_l2(kind, emulator, ring, sessions, household):
+    d = last_day(kind)
     seed, _ = typical_seed(d, ["silent_morning@0"], cutoff=time(12, 0), whole_day=False)
     d, anchors = await day_with(["silent_morning@0"], emulator, ring, sessions, household, d=d, seed=seed)
     first = anchors["first_activity"]
+    assert first.window_end < time(12, 0)
     deadline = local(d, first.window_end, 1)
 
     # The morning on a fake clock: a concern opens by the time the first-activity window
-    # closes (sooner if the overnight silence already runs past the usual longest gap), and
-    # reaches level 1. Missed first activity scores 40 x confidence, so with less than full
-    # confidence level 1 comes once the silence adds points.
+    # closes (sooner if the overnight silence already runs past the usual longest gap).
     now, case = local(d, time(5, 0)), None
     while case is None or case.level < 1:
         assert now < local(d, time(12, 0)), "never reached level 1 by noon"
@@ -140,9 +139,12 @@ async def test_silent_morning_opens_a_concern_that_climbs_from_l1_to_l2(emulator
         now += timedelta(minutes=1)
     reached = now - timedelta(minutes=1)
     assert case.kind == "concern" and case.state == "open"
+    assert case.level == 1  # the homeowner's own check comes first, whatever the score
     assert case.agent_decision["status"] == "pending"
     missed = next((s for s in case.signals if s["kind"] == "missed_anchor"), None)
-    assert missed is None or missed["anchor"] == "first_activity"
+    if missed:
+        assert missed["anchor"] == "first_activity"
+        assert missed["points"] == pytest.approx(min(40, 50 * first.confidence), abs=0.1)
 
     await run_tick(sessions, household, ring, reached + timedelta(minutes=14))
     assert (await cases(sessions))[0].level == 1  # not yet
@@ -150,7 +152,7 @@ async def test_silent_morning_opens_a_concern_that_climbs_from_l1_to_l2(emulator
     [case] = await cases(sessions)
     assert case.level == 2 and case.state == "open"
     levels = [h["level"] for h in case.score_history]
-    assert levels[-1] == 2 and sorted(levels) == levels
+    assert levels[-1] == 2 and sorted(levels) == levels and 1 in levels
 
 
 async def test_camera_offline_opens_a_device_issue_not_a_concern(emulator, ring, sessions, household):
@@ -244,7 +246,7 @@ async def test_a_normal_day_opens_no_case_and_every_anchor_is_met(emulator, ring
 
 
 async def test_a_late_aide_opens_a_watch_case_that_the_arrival_resolves(emulator, ring, sessions, household):
-    d = last_day(weekday_only=True)
+    d = last_day("weekday")
     late = ["delay@0:aide_visit+90"]
     seed, events = typical_seed(d, late, quiet=[(time(10, 0), time(13, 0))])
     d, anchors = await day_with(late, emulator, ring, sessions, household, d=d, seed=seed, cutoff=time(23, 59))

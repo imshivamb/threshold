@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from visits import DoorEvent
-from watch import AnchorView, Today, concern_signals, level_for, score_of
+from watch import AnchorView, Today, concern_signals, level_for, next_level, score_of
 
 IST = ZoneInfo("Asia/Kolkata")
 DAY = date(2026, 9, 29)  # a Tuesday
@@ -46,6 +46,24 @@ def kinds(signals):
 def test_levels_follow_the_score_bands():
     assert [level_for(s) for s in (0, 19, 20, 39, 40, 59, 60, 79, 80, 100)] == [None, None, 0, 0, 1, 1, 2, 2, 3, 3]
     assert score_of([{"points": 70}, {"points": 50}]) == 100 and score_of([{"points": 30}, {"points": -40}]) == 0
+
+
+def test_a_concern_passes_through_level_1_unless_the_score_is_80_plus():
+    assert next_level(None, 65) == 1  # would be 2: the homeowner is asked first
+    assert next_level(0, 65) == 1
+    assert next_level(1, 79) == 1  # level 2 only once level 1 goes unanswered
+    assert next_level(2, 65) == 2
+    assert next_level(None, 80) == 3 and next_level(1, 85) == 3
+    assert next_level(2, 30) == 2  # never goes down while open
+    assert next_level(None, 10) is None
+
+
+def test_missed_first_activity_scores_50_x_confidence_up_to_40():
+    def points(confidence):
+        a = anchor("first_activity", "07:00", "08:00", confidence)
+        return kinds(concern_signals([a], today(at(8, 5), last_human=human(at(21, 40, DAY - timedelta(days=1)))), STATS))["missed_anchor"]
+
+    assert points(0.7) == 35 and points(0.8) == 40 and points(1.0) == 40
 
 
 def test_a_low_confidence_anchor_never_alerts():

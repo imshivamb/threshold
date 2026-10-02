@@ -23,6 +23,7 @@ WINDOW_PAD_MIN = 15
 MIN_CONFIDENCE = 0.6
 MIN_DAYS_OBSERVED = 7
 DAY_START = time(4, 0)  # first activity counts from 04:00
+FIRST_ACTIVITY_CUTOFF = time(12, 0)  # a later "first activity" is an outlier day, not the routine
 OUT_AND_BACK = (timedelta(minutes=20), timedelta(minutes=180))
 NIGHT = (time(1, 0), time(4, 0))
 
@@ -81,7 +82,10 @@ def daily_observations(
         local = ev.at.astimezone(tz)
         day = out[local.date()]
         if local.time() >= DAY_START and "first_activity" not in day:
-            day["first_activity"] = {"minute": _minutes(local)}
+            # Mark the day as decided either way; only a morning time is learned. An
+            # afternoon first activity (a skipped morning) would stretch the window for
+            # weeks, especially for weekends with only ~8 observations.
+            day["first_activity"] = {"minute": _minutes(local)} if local.time() < FIRST_ACTIVITY_CUTOFF else None
         day["last_activity"] = {"minute": _minutes(local)}
 
     for v in sorted(visits, key=lambda v: v.started_at):
@@ -111,7 +115,7 @@ def learn_anchors(observations: dict[date, dict[str, dict]], observed_days: list
     for name in ANCHORS:
         for group in DAY_GROUPS:
             days = days_by_group.get(group, [])
-            seen = [observations[d][name] for d in days if name in observations.get(d, {})]
+            seen = [observations[d][name] for d in days if observations.get(d, {}).get(name)]
             if not days or not seen:
                 continue
             minutes = [o["minute"] for o in seen]

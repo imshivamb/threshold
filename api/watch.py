@@ -34,8 +34,9 @@ log = logging.getLogger("threshold.watch")
 DOOR_TYPES = ("motion_detected", "button_press")
 LOOKBACK = timedelta(days=28)
 
-# Concern score points (build spec, "Detection logic")
-MISSED_FIRST_ACTIVITY_MAX = 40  # x anchor confidence
+# Concern score points (build spec, "Detection logic", with the owner's adjustments)
+MISSED_FIRST_ACTIVITY_MAX = 40
+MISSED_FIRST_ACTIVITY_RATE = 50  # x anchor confidence: confidence >= 0.8 alone reaches level 1
 GAP_MAX, GAP_POINTS_PER_HOUR = 30, 10
 AIDE_LATE, AIDE_GRACE = 20, timedelta(minutes=30)
 NIGHT_ACTIVITY = 15
@@ -51,6 +52,18 @@ def level_for(score: int) -> int | None:
     if score < 20:
         return None
     return 0 if score < 40 else 1 if score < 60 else 2 if score < 80 else 3
+
+
+def next_level(current: int | None, score: int) -> int | None:
+    """The level a score allows from ``current`` (None: no case yet). A concern passes
+    through level 1, the homeowner's own check, before anyone else is told: the score alone
+    never jumps past level 1 unless it is 80+. Levels never go down while a case is open."""
+    target = level_for(score)
+    if target is None:
+        return current
+    if target == 2 and (current is None or current < 2):
+        target = 1  # level 2 comes from level 1 going unanswered
+    return target if current is None else max(current, target)
 
 
 def clamp_score(points: float) -> int:
@@ -191,7 +204,9 @@ def concern_signals(anchors: list[AnchorView], today: Today, stats: dict | None)
             continue
         if today.blind_until and datetime.combine(today.day, a.window_end, today.tz) <= today.blind_until:
             continue  # the window closed while the camera was down
-        points = MISSED_FIRST_ACTIVITY_MAX * a.confidence if a.name == "first_activity" else 0
+        points = (
+            min(MISSED_FIRST_ACTIVITY_MAX, MISSED_FIRST_ACTIVITY_RATE * a.confidence) if a.name == "first_activity" else 0
+        )
         signals.append(
             Signal(f"missed:{a.name}:{day}", "missed_anchor", points,
                    {"anchor": a.name, "window": list(s.window), "confidence": a.confidence})
@@ -458,7 +473,7 @@ async def tick(
     score = score_of(list(merged.values()))
 
     if concern is None:
-        level = level_for(score)
+        level = next_level(None, score)
         if level is None:
             return result
         concern = _new_case(household.id, "concern", today.day, now, list(merged.values()))
@@ -469,7 +484,7 @@ async def tick(
         log.info("concern case %s opened: score %s, level %s", concern.id, score, level)
     else:
         concern.signals, concern.score = list(merged.values()), score
-        level = max(concern.level, level_for(score) or 0)
+        level = next_level(concern.level, score)
         timeout = ACK_TIMEOUT.get(concern.level)
         if concern.state == "open" and timeout and now - _aware(concern.level_since) >= timeout:
             level = max(level, min(MAX_LEVEL, concern.level + 1))  # unanswered: move up one

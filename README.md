@@ -86,7 +86,8 @@ token expires, the api returns 401 with a prompt to paste a new one.
   vehicle plus a ring), and rung-in visits that last until the person is seen leaving.
   Other human motion is the resident stepping in or out.
 - `api/rhythm.py` learns five anchors per weekday / weekend group: `first_activity`,
-  `aide_visit`, `delivery`, `out_and_back` and `last_activity`. Each window is P10 − 15 min to
+  `aide_visit`, `delivery`, `out_and_back` and `last_activity` (a first activity after 12:00
+  is treated as an outlier day). Each window is P10 − 15 min to
   P90 + 15 min; confidence is days seen ÷ days observed. An anchor may alert only with
   confidence ≥ 0.6 and at least 7 observed days.
 - It relearns every night at 03:00 household time, and after every backfill.
@@ -103,12 +104,13 @@ token expires, the api returns 401 with a prompt to paste a new one.
    offline, or its heartbeat is older than `DEVICE_STALE_HOURS` (2), the signals open a
    `device_issue` case, not a concern. Nothing that happened while a camera was down is
    judged afterwards.
-4. Otherwise the **concern score** (0–100): missed first activity × confidence (up to 40),
+4. Otherwise the **concern score** (0–100): missed first activity, 50 × confidence (up to 40),
    silence beyond the P95 gap (10 a hour, up to 30), a late aide (20), unusual night
    activity (15), and −40 when an ack reason on file explains it.
 5. Score sets the **level**: 20–39 → 0 watch, 40–59 → 1 gentle check, 60–79 → 2 primary
-   caregiver, 80+ → 3 whole circle. An unanswered level 1 climbs after 15 min, level 2
-   after 30 min. Any human activity at the door resolves the concern.
+   caregiver, 80+ → 3 whole circle. A concern always passes through level 1 (the
+   homeowner's own check) first unless the score is 80+. An unanswered level 1 climbs after
+   15 min, level 2 after 30 min. Any human activity at the door resolves the concern.
 
 `GET /households/{id}/today` shows today's anchors and open cases; `GET /cases/{id}` shows
 signals, score history and acks; `POST /cases/{id}/ack` takes `fine`, `calling` or
