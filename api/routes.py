@@ -8,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session
-from models import Device, Event
+from models import Anchor, Device, Event, Visit
+from rhythm import can_alert
 from ring import RingError, RingTokenExpired
+from routine import LOOKBACK_DAYS
 
 router = APIRouter()
 
@@ -50,8 +52,8 @@ async def set_playground_token(body: TokenIn, c=Depends(ctx)) -> dict:
         raise HTTPException(401, str(exc)) from exc
     except RingError as exc:
         raise HTTPException(502, f"{exc} {exc.body[:200]}") from exc
-    poll = await c.poller.poll_once() if c.poller else None
-    return {"token": c.tokens.status(), "devices": [d.name for d in devices], "poll": poll}
+    backfilled = await c.backfill()
+    return {"token": c.tokens.status(), "devices": [d.name for d in devices], "backfill": backfilled}
 
 
 @router.get("/devices")
@@ -120,3 +122,76 @@ async def start_live_view(device_id: str, request: Request, c=Depends(ctx)) -> R
         media_type="application/sdp",
         headers={"X-Ring-Session-Url": session.session_url},
     )
+
+
+@router.post("/ring/backfill")
+async def backfill_history(days: int = LOOKBACK_DAYS, c=Depends(ctx)) -> dict:
+    """Read up to ``days`` of past Ring history, then relearn visits and the rhythm."""
+    try:
+        return await c.backfill(min(max(days, 1), 90))
+    except RingTokenExpired as exc:
+        raise HTTPException(401, str(exc)) from exc
+    except RingError as exc:
+        raise HTTPException(502, f"{exc} {exc.body[:200]}") from exc
+
+
+def _household(household_id: int, c) -> None:
+    if household_id != c.household_id:
+        raise HTTPException(404, "household not found")
+
+
+@router.get("/households/{household_id}/rhythm")
+async def rhythm(household_id: int, session: AsyncSession = Depends(get_session), c=Depends(ctx)) -> list[dict]:
+    """Learned anchors: usual window, how reliable they are, and whether they may alert."""
+    _household(household_id, c)
+    rows = (
+        await session.execute(
+            select(Anchor).where(Anchor.household_id == household_id).order_by(Anchor.window_start)
+        )
+    ).scalars()
+    return [
+        {
+            "name": a.name,
+            "day_group": a.day_group,
+            "window": [a.window_start.isoformat("minutes"), a.window_end.isoformat("minutes")],
+            "confidence": a.confidence,
+            "days_seen": a.days_seen,
+            "days_observed": a.days_observed,
+            "can_alert": can_alert(a.confidence, a.days_observed),
+            "stats": a.stats,
+            "computed_at": a.computed_at,
+        }
+        for a in rows
+    ]
+
+
+@router.post("/households/{household_id}/rhythm/recompute")
+async def recompute_rhythm(household_id: int, c=Depends(ctx)) -> dict:
+    _household(household_id, c)
+    return await c.relearn()
+
+
+@router.get("/households/{household_id}/visits")
+async def recent_visits(
+    household_id: int, limit: int = 50, session: AsyncSession = Depends(get_session), c=Depends(ctx)
+) -> list[dict]:
+    _household(household_id, c)
+    rows = (
+        await session.execute(
+            select(Visit)
+            .where(Visit.household_id == household_id)
+            .order_by(Visit.started_at.desc())
+            .limit(min(limit, 500))
+        )
+    ).scalars()
+    return [
+        {
+            "id": v.id,
+            "started_at": v.started_at,
+            "ended_at": v.ended_at,
+            "minutes": round((v.ended_at - v.started_at).total_seconds() / 60),
+            "role_guess": v.role_guess,
+            "event_ids": v.event_ids,
+        }
+        for v in rows
+    ]

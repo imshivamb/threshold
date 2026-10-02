@@ -1,0 +1,10 @@
+# Only the ring-sandbox image builds from the repo root; it needs tools/synth.
+**/.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+.git
+.env
+docs

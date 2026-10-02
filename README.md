@@ -33,6 +33,21 @@ curl localhost:8000/events      # or open http://localhost:3000
 
 (Or `pip install "ring-sandbox[server]"` and run `ring-sandbox play delivery --speed 5` from your machine.)
 
+### Three weeks of routine in one command
+
+`ringsynth` writes weeks of a persona's daily routine into the emulator's event history,
+and Threshold backfills it through the Ring history API, then learns the rhythm:
+
+```bash
+docker compose exec ring-sandbox sh -c 'ringsynth --persona $PERSONAS/aging_in_place.yml --days 28'
+curl -X POST localhost:8000/ring/backfill
+curl localhost:8000/households/1/rhythm
+```
+
+Add `--anomaly silent_morning@-1` (nothing before noon yesterday) or
+`--anomaly offline@-2:07:00-10:00` to test absence detection. Use `--dry-run` to print the
+plan. Personas live in [`tools/synth/personas`](tools/synth/personas).
+
 ### Playground mode (real Ring API)
 
 Set `RING_MODE=playground` in `.env`, `docker compose up`, then paste a 30-minute token from
@@ -55,17 +70,33 @@ token expires, the api returns 401 with a prompt to paste a new one.
 - `api/webhooks.py` — `POST /webhooks/ring` checks the HMAC-SHA256 `X-Signature` over the raw
   bytes, drops duplicate `meta.request_id`s and returns 200 quickly.
 - `api/poller.py` — the Playground history poller, which also uses the status call as a heartbeat.
-- `events.ring_request_id` is unique, so both sources dedupe in the database.
+- `events.ring_request_id` is unique, so redeliveries and overlapping polls are dropped. The
+  same moment arriving from both sources (a webhook, then a history backfill) is also
+  stored once: the dedupe checks device, type and timestamp.
+- `POST /ring/backfill` reads up to 28 days of Ring history on connect, so a new install has
+  a rhythm to learn from on day one.
+
+## How the rhythm is learned
+
+- `api/visits.py` groups door events into bursts, then visits: deliveries (a parcel, or a
+  vehicle plus a ring), and rung-in visits that last until the person is seen leaving.
+  Other human motion is the resident stepping in or out.
+- `api/rhythm.py` learns five anchors per weekday / weekend group: `first_activity`,
+  `aide_visit`, `delivery`, `out_and_back` and `last_activity`. Each window is P10 − 15 min to
+  P90 + 15 min; confidence is days seen ÷ days observed. An anchor may alert only with
+  confidence ≥ 0.6 and at least 7 observed days.
+- It relearns every night at 03:00 household time, and after every backfill.
 
 ## Tests
 
 ```bash
 cd api
-uv venv && uv pip install -e ".[dev]"
-.venv/bin/pytest
+uv venv && uv pip install -e ".[dev]" -e ../tools/synth
+.venv/bin/pytest                 # api
+.venv/bin/pytest ../tools/synth  # synthesizer
 ```
 
-The Ring client tests run against an in-process ring-sandbox emulator.
+The Ring client and backfill tests run against an in-process ring-sandbox emulator.
 
 ## License
 

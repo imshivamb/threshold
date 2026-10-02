@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -15,10 +16,11 @@ import routes
 import webhooks
 from config import Settings, get_settings
 from db import dispose_engine, init_engine, sessionmaker
-from ingest import ensure_household, sync_devices
-from models import Device
+from ingest import backfill, ensure_household, sync_devices
+from models import Device, Household
 from poller import HistoryPoller
 from ring import RingClient, RingError, TokenStore
+from routine import LOOKBACK_DAYS, rebuild
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("threshold")
@@ -41,6 +43,30 @@ class AppContext:
             self.poller.device_ids = [d.id for d in devices]
         log.info("synced %d Ring device(s): %s", len(devices), ", ".join(d.name for d in devices))
         return devices
+
+    @property
+    def history_source(self) -> str:
+        return "playground" if self.settings.ring_mode == "playground" else "emulator"
+
+    async def backfill(self, days: int = LOOKBACK_DAYS) -> dict:
+        """Pull past Ring history for every device, then relearn visits and anchors."""
+        devices = await self.sync_devices()
+        since = datetime.now(tz=UTC) - timedelta(days=days)
+        async with sessionmaker()() as session:
+            written = await backfill(
+                session, self.ring, self.household_id, [d.id for d in devices], since=since, source=self.history_source
+            )
+            await session.commit()
+        log.info("backfilled %d event(s) from %d day(s) of Ring history", sum(written.values()), days)
+        return {"written": sum(written.values()), "rhythm": await self.relearn()}
+
+    async def relearn(self) -> dict:
+        async with sessionmaker()() as session:
+            household = await session.get(Household, self.household_id)
+            result = await rebuild(session, household)
+            await session.commit()
+        log.info("rhythm relearned: %s", result)
+        return result
 
 
 async def register_emulator_webhook(settings: Settings) -> None:
@@ -79,9 +105,12 @@ async def lifespan(app: FastAPI):
 
     if tokens.current():
         try:
-            await ctx.sync_devices()
+            if settings.ring_mode == "playground":
+                await ctx.backfill()
+            else:
+                await ctx.sync_devices()
         except (RingError, httpx.HTTPError) as exc:
-            log.warning("initial device sync failed: %s", exc)
+            log.warning("initial Ring sync failed: %s", exc)
     else:
         log.warning("no Playground token yet — POST /settings/playground-token to connect Ring")
 
@@ -107,6 +136,14 @@ async def lifespan(app: FastAPI):
         scheduler.add_job(
             poll_job, "interval", seconds=settings.poll_interval_seconds, max_instances=1, coalesce=True
         )
+    async def relearn_job() -> None:
+        try:
+            await ctx.relearn()
+        except Exception:
+            log.exception("nightly relearn failed")
+
+    # Relearn the rhythm every night once the day is complete.
+    scheduler.add_job(relearn_job, "cron", hour=3, minute=0, timezone=household.timezone)
     scheduler.start()
     try:
         yield

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import Settings
 from models import AccessLog, Device, Event, Household
-from ring import HistoryEvent, RingDevice, ms_to_utc
+from ring import HistoryEvent, RingClient, RingDevice, ms_to_utc
 
 # History uses short names; webhooks use the long ones. Store one vocabulary.
 HISTORY_TYPE_MAP = {"motion": "motion_detected", "ding": "button_press"}
@@ -70,7 +70,24 @@ def touch_heartbeat(device: Device, at: datetime) -> None:
 
 
 async def insert_event(session: AsyncSession, values: dict[str, Any]) -> bool:
-    """Insert unless ring_request_id was seen before. Returns True if a row was written."""
+    """Insert unless already stored. Returns True if a row was written.
+
+    Two checks: the same ring_request_id (duplicate delivery, overlapping poll), and the
+    same device + type + time from the other source (a webhook later backfilled from
+    history, or the reverse), so one moment at the door is never counted twice.
+    """
+    if values.get("device_id"):
+        same_moment = await session.execute(
+            select(Event.id)
+            .where(
+                Event.device_id == values["device_id"],
+                Event.type == values["type"],
+                Event.started_at == values["started_at"],
+            )
+            .limit(1)
+        )
+        if same_moment.first() is not None:
+            return False
     stmt = (
         _insert(session, Event)
         .values(**values)
@@ -139,6 +156,18 @@ async def store_history(
                 session.add(
                     AccessLog(household_id=household_id, action="live_view", target=ev.device_id, at=ev.started_at)
                 )
+    return written
+
+
+async def backfill(
+    session: AsyncSession, ring: RingClient, household_id: int, device_ids: list[str], *, since: datetime, source: str
+) -> dict[str, int]:
+    """Read past Ring event history for each device. A new install needs past days
+    before the Rhythm Engine can learn anything; Ring keeps the history for us."""
+    written = {}
+    for device_id in device_ids:
+        events = await ring.get_history(device_id, since=since, max_pages=200)
+        written[device_id] = await store_history(session, household_id, events, source=source)
     return written
 
 

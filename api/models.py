@@ -1,9 +1,22 @@
-"""First five tables. visits, anchors and cases arrive with the Rhythm Engine and Silence Watch."""
+"""Tables so far. cases arrive with the Silence Watch."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -41,12 +54,14 @@ class Member(Base):
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64))
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     sees_snapshots: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Aides only, e.g. {"days": ["mon", "tue"], "start": "10:00", "end": "11:30"}
+    schedule: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
 
 
 class Device(Base):
     __tablename__ = "devices"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # Ring device id
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)  # Ring device id (~116 chars)
     household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(32), default="unknown")
     name: Mapped[str] = mapped_column(String(200))
@@ -56,13 +71,18 @@ class Device(Base):
 
 class Event(Base):
     __tablename__ = "events"
+    # Cross-source dedupe looks up (device, type, time): the same moment can arrive as a
+    # webhook and again from a history backfill.
+    __table_args__ = (Index("ix_events_device_type_started", "device_id", "type", "started_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
     # Webhooks: meta.request_id. Polled history: "history:<history event id>".
     # Unique so duplicate deliveries and overlapping polls are dropped.
     ring_request_id: Mapped[str] = mapped_column(String(255), unique=True)
-    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id", ondelete="SET NULL"), index=True)
+    device_id: Mapped[str | None] = mapped_column(
+        String(255), ForeignKey("devices.id", ondelete="SET NULL"), index=True
+    )
     type: Mapped[str] = mapped_column(String(64))
     sub_type: Mapped[str | None] = mapped_column(String(64))
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -82,3 +102,37 @@ class AccessLog(Base):
     action: Mapped[str] = mapped_column(String(32))
     target: Mapped[str | None] = mapped_column(String(255))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class Visit(Base):
+    """Someone at the door: arrival to departure. Rebuilt from events by visits.py."""
+
+    __tablename__ = "visits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    event_ids: Mapped[list[int]] = mapped_column(JSONType)
+    caption: Mapped[str | None] = mapped_column(Text)
+    role_guess: Mapped[str] = mapped_column(String(16))  # aide / delivery / unknown
+
+
+class Anchor(Base):
+    """A daily moment the household usually produces, learned by the Rhythm Engine."""
+
+    __tablename__ = "anchors"
+    __table_args__ = (UniqueConstraint("household_id", "name", "day_group"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(32))  # first_activity / aide_visit / delivery / ...
+    day_group: Mapped[str] = mapped_column(String(16))  # weekday / weekend
+    window_start: Mapped[time] = mapped_column(Time)  # household local time
+    window_end: Mapped[time] = mapped_column(Time)
+    confidence: Mapped[float] = mapped_column(Float)  # days seen / days observed
+    days_observed: Mapped[int] = mapped_column(Integer)
+    days_seen: Mapped[int] = mapped_column(Integer)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONType)  # p10 / median / p90 minutes, durations
+    overrides: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)  # feedback learning (F12)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

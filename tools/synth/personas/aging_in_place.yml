@@ -1,0 +1,67 @@
+# Asha, 74, lives alone. A home aide comes on weekdays; her son lives abroad.
+# Every routine is seen by the front doorbell camera only.
+name: aging_in_place
+description: Older adult living alone with a weekday home aide.
+timezone: Asia/Kolkata
+device: Front Door
+
+routines:
+  - name: morning_step_out
+    description: Steps out to collect milk and the newspaper.
+    days: daily
+    at: "07:25"
+    jitter_min: 10
+    skip: 0.04
+    weekend: {at: "08:10", jitter_min: 15}
+    steps:
+      - {type: motion_detected, sub_type: human}
+      - {after_min: [2, 4], type: motion_detected, sub_type: human}
+
+  - name: aide_visit
+    description: Home aide rings, stays about 90 minutes, leaves.
+    days: weekdays
+    at: "10:30"
+    jitter_min: 8
+    skip: 0.04
+    steps:
+      - {type: motion_detected, sub_type: human}
+      - {after_s: 6, type: button_press}
+      - {after_min: [75, 100], type: motion_detected, sub_type: human}
+
+  - name: delivery
+    description: A courier drops off a parcel a couple of times a week.
+    days: daily
+    at: "13:30"
+    jitter_min: 90
+    skip: 0.65
+    scenario: delivery
+
+  - name: neighbour_drop_in
+    description: A neighbour rings and chats for a while.
+    days: daily
+    at: "16:00"
+    jitter_min: 60
+    skip: 0.8
+    steps:
+      - {type: motion_detected, sub_type: human}
+      - {after_s: 5, type: button_press}
+      - {after_min: [10, 30], type: motion_detected, sub_type: human}
+
+  - name: evening_walk
+    description: Walks to the temple and back.
+    days: daily
+    at: "17:45"
+    jitter_min: 15
+    skip: 0.1
+    steps:
+      - {type: motion_detected, sub_type: human}
+      - {after_min: [40, 80], type: motion_detected, sub_type: human}
+
+  - name: night_check
+    description: Locks the gate before bed.
+    days: daily
+    at: "21:40"
+    jitter_min: 15
+    skip: 0.05
+    steps:
+      - {type: motion_detected, sub_type: human}
