@@ -48,8 +48,8 @@ curl localhost:8000/households/1/today
 Use `--days 28`: anchors alert only after 7 observed days in their day group, and four
 weeks are needed for 7 weekend days.
 
-Add `--anomaly silent_morning@-1` (nothing before noon yesterday) or
-`--anomaly offline@-2:07:00-10:00` to test absence detection. Use `--dry-run` to print the
+Add `--anomaly silent_morning@-1` (nothing before noon yesterday),
+`--anomaly offline@-2:07:00-10:00` or `--anomaly delay@-1:aide_visit+90` to test absence detection. Use `--dry-run` to print the
 plan. Personas live in [`tools/synth/personas`](tools/synth/personas).
 
 ### Playground mode (real Ring API)
@@ -97,7 +97,7 @@ token expires, the api returns 401 with a prompt to paste a new one.
 
 1. Each of today's anchors is **met**, **pending** (window still open) or **missed**.
 2. Signals: missed anchors (only those allowed to alert), a gap in human activity beyond
-   the household's P95 gap, the aide not arriving 30 min after their slot, and activity
+   the household's P95 gap for weekdays or weekends, the aide not arriving 30 min after their slot, and activity
    between 01:00 and 04:00 that the history never shows.
 3. **Device health first.** Before scoring, each camera's status is refreshed. If one is
    offline, or its heartbeat is older than `DEVICE_STALE_HOURS` (2), the signals open a
@@ -123,8 +123,10 @@ uv venv && uv pip install -e ".[dev]" -e ../tools/synth
 .venv/bin/pytest ../tools/synth  # synthesizer
 ```
 
-The Ring client, backfill and Silence Watch tests run against an in-process ring-sandbox
-emulator, on SQLite by default. To run them on Postgres instead, point `TEST_DATABASE_URL`
+The main tests are persona-day scenarios (`api/tests/test_watch_e2e.py`): four weeks of
+synthesized history plus one scenario day (normal, silent morning, camera offline, late aide,
+…) run through an in-process ring-sandbox emulator, history backfill and the Silence Watch on
+a fake clock, asserting the case a person would see. They run on SQLite by default. To run them on Postgres instead, point `TEST_DATABASE_URL`
 at a throwaway database, e.g.
 `TEST_DATABASE_URL=postgresql+asyncpg://threshold:threshold@localhost:5432/threshold_test`.
 

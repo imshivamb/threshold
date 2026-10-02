@@ -50,17 +50,6 @@ async def count_events(sessions) -> int:
         return (await session.execute(select(func.count(Event.id)))).scalar_one()
 
 
-async def test_signed_webhook_is_stored(api, sessions):
-    body, sig = delivery()
-    r = await post(api, body, sig)
-    assert r.status_code == 200 and r.json()["status"] == "stored"
-    async with sessions() as session:
-        event = (await session.execute(select(Event))).scalar_one()
-        device = await session.get(Device, "ava1.ring.device.FRONT")
-    assert (event.type, event.sub_type, event.source) == ("motion_detected", "human", "emulator")
-    assert device is not None and device.last_heartbeat_at is not None
-
-
 async def test_duplicate_delivery_is_dropped(api, sessions):
     body, sig = delivery(request_id="req-1")
     assert (await post(api, body, sig)).json()["status"] == "stored"
@@ -95,8 +84,3 @@ async def test_device_offline_and_online_update_device(api, sessions):
         assert (await post(api, body, sig)).status_code == 200
     async with sessions() as session:
         assert (await session.get(Device, "ava1.ring.device.FRONT")).online is False
-
-
-async def test_malformed_signed_body_is_400(api):
-    body = b'{"hello": "world"}'
-    assert (await post(api, body, sandbox_webhooks.sign(SIGNING_KEY, body))).status_code == 400

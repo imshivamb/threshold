@@ -138,14 +138,18 @@ def learn_anchors(observations: dict[date, dict[str, dict]], observed_days: list
 
 
 def activity_stats(events: list[DoorEvent], tz: ZoneInfo) -> dict:
-    """Household-wide facts the concern score needs: the P95 gap between human activity,
-    and how many past days had human activity at night (01:00-04:00)."""
+    """Household-wide facts the concern score needs: the P95 gap between human activity per
+    day group (a quiet Sunday has longer gaps than a weekday with an aide), and how many past
+    days had human activity at night (01:00-04:00). A gap belongs to the day it ends on,
+    which is the day being judged while it is still running."""
     human = sorted(e.at for e in events if e.is_human)
-    gaps = [(b - a).total_seconds() / 60 for a, b in zip(human, human[1:])]
+    gaps: dict[str, list[float]] = defaultdict(list)
+    for a, b in zip(human, human[1:]):
+        gaps[day_group(b.astimezone(tz).date())].append((b - a).total_seconds() / 60)
     night_days = {
         t.astimezone(tz).date() for t in human if NIGHT[0] <= t.astimezone(tz).time() < NIGHT[1]
     }
     return {
-        "p95_gap_min": round(percentile(gaps, 0.95)) if gaps else None,
+        "p95_gap_min": {group: round(percentile(g, 0.95)) for group, g in gaps.items()},
         "night_activity_days": len(night_days),
     }

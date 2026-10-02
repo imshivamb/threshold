@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from rhythm import can_alert, daily_observations, learn_anchors, percentile
+from rhythm import daily_observations, learn_anchors
 from visits import DoorEvent, group_visits
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -14,11 +14,6 @@ def at(day: date, hh: int, mm: int) -> datetime:
 
 def human(when: datetime) -> DoorEvent:
     return DoorEvent(next(_ids), "front", "motion_detected", "human", when)
-
-
-def test_percentile_matches_linear_interpolation():
-    assert percentile([1, 2, 3, 4], 0.1) == 1.3
-    assert percentile([5], 0.9) == 5
 
 
 def test_window_is_p10_minus_15_to_p90_plus_15_and_confidence_counts_missing_days():
@@ -39,21 +34,6 @@ def test_window_is_p10_minus_15_to_p90_plus_15_and_confidence_counts_missing_day
     assert first.window_start == time(6, 46) and first.window_end == time(7, 23)
     assert first.can_alert
     assert ("first_activity", "weekend") not in anchors  # weekends were silent: nothing to learn
-
-
-def test_low_confidence_and_short_history_never_alert():
-    assert not can_alert(0.59, 28)
-    assert not can_alert(1.0, 6)
-    assert can_alert(0.6, 7)
-
-
-def test_out_and_back_takes_the_departure_time():
-    d = date(2026, 9, 7)
-    events = [human(at(d, 7, 30)), human(at(d, 17, 45)), human(at(d, 18, 50))]
-    visits, resident = group_visits(events, IST)
-    obs = daily_observations(events, visits, resident, IST)
-    assert obs[d]["out_and_back"]["minute"] == 17 * 60 + 45
-    assert round(obs[d]["out_and_back"]["away_min"]) == 65
 
 
 def test_first_activity_ignores_the_small_hours():

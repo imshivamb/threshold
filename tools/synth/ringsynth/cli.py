@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> None:
         action="append",
         default=[],
         metavar="SPEC",
-        help="silent_morning@-2 or offline@-5:07:00-10:00 (day offset from today; repeatable)",
+        help="silent_morning@-2, offline@-5:07:00-10:00 or delay@-1:aide_visit+90 "
+        "(day offset from today; repeatable)",
     )
     p.add_argument("--deliver", action="store_true", help="also send webhooks (default: history only)")
     p.add_argument("--dry-run", action="store_true", help="print the plan without writing it")

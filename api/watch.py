@@ -1,7 +1,8 @@
 """Silence Watch: every minute, compare today with the learned rhythm.
 
 1. Anchor status: each of today's anchors is met, pending (window still open) or missed.
-2. Signals: missed anchors, a gap in human activity beyond the household's P95, a late
+2. Signals: missed anchors, a gap in human activity beyond the household's P95 gap for
+   that day group, a late
    aide, unusual night activity. Only anchors that may alert (confidence >= 0.6 and
    7+ observed days in today's day group) count.
 3. Device health first: if a watched camera is offline or its heartbeat is stale, the
@@ -200,6 +201,8 @@ def concern_signals(anchors: list[AnchorView], today: Today, stats: dict | None)
         signals.append(Signal(f"explained:{day}", "explained", EXPLAINED, {"reason": explained_reason}))
 
     p95 = stats.get("p95_gap_min")
+    if isinstance(p95, dict):  # older rhythm_stats held one number; relearning upgrades it
+        p95 = p95.get(day_group(today.day))
     if today.last_human and p95:
         since = max(today.last_human.at, today.blind_until or today.last_human.at)
         since_h = (today.now - since).total_seconds() / 3600

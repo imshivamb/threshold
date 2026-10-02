@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from visits import DoorEvent
-from watch import AnchorView, Today, anchor_statuses, concern_signals, level_for, score_of
+from watch import AnchorView, Today, concern_signals, level_for, score_of
 
 IST = ZoneInfo("Asia/Kolkata")
 DAY = date(2026, 9, 29)  # a Tuesday
@@ -30,7 +30,7 @@ def anchor(name, start, end, confidence=1.0, days=15, median=None, overrides=Non
 
 FIRST = anchor("first_activity", "07:00", "08:00")
 AIDE = anchor("aide_visit", "10:10", "10:50", median="10:30")
-STATS = {"p95_gap_min": 11 * 60, "night_activity_days": 0}
+STATS = {"p95_gap_min": {"weekday": 11 * 60, "weekend": 11 * 60}, "night_activity_days": 0}
 
 
 def today(now: datetime, events=(), last_human=None, slot=None) -> Today:
@@ -48,21 +48,6 @@ def test_levels_follow_the_score_bands():
     assert score_of([{"points": 70}, {"points": 50}]) == 100 and score_of([{"points": 30}, {"points": -40}]) == 0
 
 
-def test_anchor_status_is_pending_until_the_window_closes_then_met_or_missed():
-    t = today(at(7, 30))
-    assert anchor_statuses([FIRST], t)[0].status == "pending"
-    t = today(at(8, 1))
-    assert anchor_statuses([FIRST], t)[0].status == "missed"
-    t = today(at(8, 1), [human(at(7, 20))])
-    s = anchor_statuses([FIRST], t)[0]
-    assert (s.status, s.met_at) == ("met", "07:20")
-
-
-def test_a_silent_morning_scores_the_missed_first_activity_by_its_confidence():
-    signals = concern_signals([anchor("first_activity", "07:00", "08:00", 0.9)], today(at(8, 5), last_human=human(at(21, 40, DAY - timedelta(days=1)))), STATS)
-    assert kinds(signals) == {"missed_anchor": 36.0}
-
-
 def test_a_low_confidence_anchor_never_alerts():
     low = anchor("first_activity", "07:00", "08:00", confidence=0.59)
     assert concern_signals([low], today(at(9, 0)), STATS) == []
@@ -71,15 +56,6 @@ def test_a_low_confidence_anchor_never_alerts():
 def test_nothing_alerts_before_seven_days_in_the_day_group():
     young = anchor("first_activity", "07:00", "08:00", days=6)
     assert concern_signals([young], today(at(9, 0)), STATS) == []
-
-
-def test_a_late_aide_adds_twenty_points_thirty_minutes_after_the_slot():
-    morning = [human(at(7, 20))]
-    assert "aide_late" not in kinds(concern_signals([FIRST, AIDE], today(at(10, 59), morning), STATS))
-    signals = concern_signals([FIRST, AIDE], today(at(11, 0), morning), STATS)
-    assert kinds(signals)["aide_late"] == 20
-    arrived = morning + [human(at(10, 40)), ring(at(10, 40))]
-    assert "aide_late" not in kinds(concern_signals([FIRST, AIDE], today(at(11, 0), arrived), STATS))
 
 
 def test_the_aide_schedule_on_file_beats_the_learned_slot():

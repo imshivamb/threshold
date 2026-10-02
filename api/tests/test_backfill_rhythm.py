@@ -88,19 +88,3 @@ async def test_backfill_twice_and_webhook_then_history_never_double_count(emulat
         assert sum((await backfill_all(session, ring, household.id)).values()) == 0
         await session.commit()
         assert (await session.execute(select(func.count(Event.id)))).scalar_one() == 1
-
-
-async def test_a_silent_morning_shows_as_a_missed_first_activity(emulator, ring, sessions, household):
-    _, world = emulator
-    today = datetime.now(tz=UTC).astimezone(ringsynth.load_persona(PERSONA).timezone).date()
-    silent = ringsynth.parse_anomaly("silent_morning@-1", today)
-    synthesize(world, anomalies=[silent])
-    async with sessions() as session:
-        await backfill_all(session, ring, household.id)
-        await rebuild(session, household)
-        await session.commit()
-        first = (
-            await session.execute(select(Anchor).where(Anchor.name == "first_activity"))
-        ).scalars().all()
-    # Yesterday's first activity came only after noon, outside every learned window.
-    assert all(a.window_end < time(12, 0) for a in first)

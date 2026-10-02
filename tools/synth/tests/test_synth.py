@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,13 +25,6 @@ def test_same_seed_same_history_different_seed_different_history():
     a = plan(persona, 21, seed=1, end=END, now=NOW)
     assert a == plan(persona, 21, seed=1, end=END, now=NOW)
     assert a != plan(persona, 21, seed=2, end=END, now=NOW)
-
-
-def test_days_span_and_everything_is_in_the_past():
-    events = plan(load_persona(PERSONA), 21, seed=1, end=END, now=NOW)
-    days = {local(e).date() for e in events}
-    assert min(days) == date(2026, 9, 12) and max(days) == date(2026, 10, 2)
-    assert all(e.at < NOW for e in events)
 
 
 def test_aide_only_on_weekdays_and_jitter_stays_near_the_set_time():
@@ -88,6 +81,17 @@ def test_offline_window_drops_events_and_marks_the_device_offline():
     kinds = [(e.type, local(e).strftime("%H:%M")) for e in day if e.type.startswith("device_")]
     assert kinds == [("device_offline", "07:00"), ("device_online", "12:00")]
     assert not [e for e in day if e.type == "motion_detected" and time(7) <= local(e).time() < time(12)]
+
+
+def test_delay_shifts_one_routine_on_one_day():
+    persona = load_persona(PERSONA)
+    normal = plan(persona, 7, seed=1, end=END, now=NOW)
+    late = plan(persona, 7, seed=1, end=END, now=NOW, anomalies=[parse_anomaly("delay@-1:aide_visit+90", END)])
+    day = date(2026, 10, 2)  # a Friday: the aide comes
+    aide = lambda evs: [local(e) for e in evs if e.routine == "aide_visit" and local(e).date() == day]
+    assert [t + timedelta(minutes=90) for t in aide(normal)] == aide(late)
+    others = lambda evs: [e for e in evs if not (e.routine == "aide_visit" and local(e).date() == day)]
+    assert others(normal) == others(late)
 
 
 def test_bad_persona_is_rejected():

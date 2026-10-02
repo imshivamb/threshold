@@ -8,6 +8,7 @@ date always give the same history; ``apply`` writes the plan into a running emul
 Anomalies mark a day as unusual so absence detection can be tested:
   - ``silent_morning``: nothing happens before noon
   - ``offline``: the camera is offline between two local times, so nothing is recorded
+  - ``delay``: one routine starts N minutes late that day
 """
 
 from __future__ import annotations
@@ -64,12 +65,18 @@ class Routine:
 @dataclass(frozen=True)
 class Anomaly:
     day: date
-    kind: str  # silent_morning / offline
+    kind: str  # silent_morning / offline / delay
     start: time = time(0, 0)
     end: time = time(12, 0)
+    routine: str | None = None  # delay only
+    minutes: float = 0
 
     def suppresses(self, local: datetime) -> bool:
-        return local.date() == self.day and self.start <= local.time() < self.end
+        return self.kind != "delay" and local.date() == self.day and self.start <= local.time() < self.end
+
+    def delay_for(self, routine: str, day: date) -> timedelta:
+        hit = self.kind == "delay" and self.routine == routine and self.day == day
+        return timedelta(minutes=self.minutes) if hit else timedelta(0)
 
 
 @dataclass
@@ -173,7 +180,8 @@ def load_persona(path: str | Path) -> Persona:
 
 
 def parse_anomaly(spec: str, today: date) -> Anomaly:
-    """``silent_morning@-2`` or ``offline@-5:07:00-10:00`` (day offset from today)."""
+    """``silent_morning@-2``, ``offline@-5:07:00-10:00`` or ``delay@-1:aide_visit+90``
+    (day offset from today)."""
     kind, _, rest = spec.partition("@")
     offset, _, window = rest.partition(":")
     day = today + timedelta(days=int(offset or -1))
@@ -184,7 +192,12 @@ def parse_anomaly(spec: str, today: date) -> Anomaly:
         if not start or not end:
             raise ValueError("offline anomaly needs a window, e.g. offline@-5:07:00-10:00")
         return Anomaly(day, kind, _parse_time(start), _parse_time(end))
-    raise ValueError(f"unknown anomaly {kind!r} (silent_morning, offline)")
+    if kind == "delay":
+        routine, _, minutes = window.partition("+")
+        if not routine or not minutes:
+            raise ValueError("delay anomaly needs a routine and minutes, e.g. delay@-1:aide_visit+90")
+        return Anomaly(day, kind, routine=routine, minutes=float(minutes))
+    raise ValueError(f"unknown anomaly {kind!r} (silent_morning, offline, delay)")
 
 
 # ------------------------------------------------------------------ planning
@@ -217,6 +230,7 @@ def plan(
             if day.weekday() not in routine.days or skip_roll < prof.skip:
                 continue
             start = datetime.combine(day, prof.at, tzinfo=tz) + timedelta(minutes=jitter)
+            start += sum((a.delay_for(routine.name, day) for a in anomalies), timedelta(0))
             for step, off in zip(routine.steps, offsets, strict=True):
                 local = start + timedelta(seconds=off)
                 if any(a.suppresses(local) for a in anomalies):
