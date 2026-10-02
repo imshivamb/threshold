@@ -29,13 +29,13 @@ Format: task · steps · expected vs actual · severity · workaround · suggest
 - **Workaround:** Copy the request body from the Playground API explorer. <!-- TODO(shivam): paste it here on Oct 3 -->
 - **Suggestion:** Show a full example request body in the API reference, including `type` (`at_timestamp` / `latest_in_range`).
 
-## 3. Live views reach event history 30–45 s late
+## 3. Live views only reach event history after they end
 
 - **Date:** 2026-10-02
 - **Task:** Detect a Playground live view by polling `GET /v1/history/devices/{id}/events` every 15 s.
-- **Steps:** Start a live view on "Playground Device" at 07:43:41.97 UTC; poll history at 07:43:42, :43:57, :44:12, :44:27.
+- **Steps:** Opened a live view on "Playground Device" for about 30 s, twice. Polled history every 15 s and compared each entry's `start` / `end` with the poll times.
 - **Expected:** The `on_demand` entry is listed on the first poll after the live view starts.
-- **Actual:** It first appeared at the 07:44:27 poll, about 45 s later, with `start` = 07:43:41.97. <!-- TODO(shivam): how long was the live view open? If the entry only appears when the session closes, say so. -->
-- **Severity:** Low — fine for an access log, but polling can't show "someone is looking right now".
-- **Workaround:** None needed for the "who looked" log; show it as recent rather than live.
-- **Suggestion:** Write the history entry when the session opens, or send a webhook / Playground event for live-view start.
+- **Actual:** The entry is missing from every poll while the view is open, and appears on the first poll after `end`. Example: `start` 07:46:43.9, `end` 07:47:15.0 UTC; missing at the 07:46:57 and 07:47:12 polls, listed at 07:47:27. A 31 s live view therefore shows up 31–46 s after it began.
+- **Severity:** Low — fine for an access log, but history polling can't show "someone is looking right now".
+- **Workaround:** Present live views in the "who looked" log as recent, not live; the stored `start` is still exact.
+- **Suggestion:** List the entry (without `end`) when the session opens, or send a live-view-started event the Playground can deliver.
